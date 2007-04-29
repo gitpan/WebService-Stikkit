@@ -3,29 +3,49 @@ package WebService::Stikkit;
 use warnings;
 use strict;
 use Carp;
-
+use Data::Dumper;
 use LWP::UserAgent;
+use URI::Escape;
+use URI::QueryParam;
+
 use base qw(Class::Accessor::Fast);
 
 __PACKAGE__->mk_accessors(
-              qw(stikkit calendar todo peep bookmark comment comments todo tag) );
+    qw(stikkit calendar todo peep bookmark comment comments todo tag) );
 
-our $VERSION = '0.0.1';
+our $VERSION = '0.0.2';
 our $URL     = "http://api.stikkit.com/";
 
 our $FORMATS = {
-               'Atom'  => { ext => '.atom', mime => 'application/atom+xml', },
-               'vCard' => { ext => '.vcf',  mime => 'text/x-vcard', },
-               'iCal'  => { ext => '.ics',  mime => 'text/calendar' },
-               'json'  => { ext => '.json', mime => 'application/json' },
-               'Text'  => { ext => '.txt',  mime => 'text/plain' },
+    'Atom'  => { ext => '.atom', mime => 'application/atom+xml', },
+    'vCard' => { ext => '.vcf',  mime => 'text/x-vcard', },
+    'iCal'  => { ext => '.ics',  mime => 'text/calendar' },
+    'json'  => { ext => '.json', mime => 'application/json' },
+    'Text'  => { ext => '.txt',  mime => 'text/plain' },
 };
 
-my $TYPE_FORMAT = { stikkits  => [ 'Atom', 'vCard', 'iCal', 'json', 'Text' ],
-                    calendars => [ 'Atom', 'iCal',  'json', 'Text' ],
-                    todos     => [ 'Atom', 'iCal',  'json', 'Text' ],
-                    peeps     => [ 'Atom', 'vCard', 'json', 'Text' ],
-                    bookmarks => [ 'Atom', 'json',  'Text' ],
+our $FILTER = {
+    all => [ "name", "text", "tags", "created", "updated", "kind", "page", "raw_text", "comment" ],
+    calendar => [
+        "dates",   "done", "name", "text", "tags", "created",
+        "updated", "kind", "page"
+    ],
+    todos => [
+        "dates",   "done", "name", "text", "tags", "created",
+        "updated", "kind", "page"
+    ],
+    peeps => [
+        "letter",  "name",    "text", "tags",
+        "created", "updated", "kind", "page"
+    ],
+};
+
+our $TYPE_FORMAT = {
+    stikkits  => [ 'Atom', 'vCard', 'iCal', 'json', 'Text' ],
+    calendars => [ 'Atom', 'iCal',  'json', 'Text' ],
+    todos     => [ 'Atom', 'iCal',  'json', 'Text' ],
+    peeps     => [ 'Atom', 'vCard', 'json', 'Text' ],
+    bookmarks => [ 'Atom', 'json',  'Text' ],
 };
 
 our $BITFIELD = { events => 2, todos => 128, peeps => 32, bookmarks => 1, };
@@ -84,17 +104,16 @@ Specify kind, and get back what kind of stikkit you want
 sub stikkits {
     my ( $self, $params ) = @_;
 
-    $self->{bitfield} = 0;
-    if (defined $$params{kinds}){
-        foreach my $kind (@{$$params{kinds}}){
-            next if !defined $$BITFIELD{$kind};
-            $self->{bitfield} += $$BITFIELD{$kind};
+    $self->{ bitfield } = 0;
+    if ( defined $$params{ kind } ) {
+        if (!defined $$BITFIELD{$$params{kind}}){
+            croak "Not a valid kind";
         }
+        $self->{ bitfield } += $$BITFIELD{ $$params{kind} };
     }
-
     $self->check_format( $params, 'stikkits' );
 
-    $self->{ url }    = $URL . "stikkits" . $self->{ ext };
+    $self->{ url } = $URL . "stikkits" . $self->{ ext };
 
     $self->{ method } = "GET";
     $self->stikkit( $self->process( $params ) );
@@ -102,7 +121,7 @@ sub stikkits {
     # if we have a path, we store the data in a file
     # work only for vCard and iCal
     # if ( $$params{ path } ) {
-    # 
+    #
     # }
 }
 
@@ -121,8 +140,8 @@ sub stikkit_create {
     $self->check_format( $params, 'stikkits' );
 
     $self->{ url }     = $URL . "stikkits" . $self->{ ext };
-    $self->{ content } = "raw_text=" . $$params{ text };
-
+    $$params{raw_text} = $$params{text};
+    delete $$params{text};
     $self->{ method } = "POST";
 
     $self->stikkit( $self->process( $params ) );
@@ -162,10 +181,11 @@ sub stikkit_update {
     croak( "Give me an ID" )     unless $$params{ id };
 
     $self->check_format( $params, 'stikkits' );
-
+    $$params{raw_text} = $$params{text};
+    delete $$params{text};
     $self->{ method }  = "PUT";
     $self->{ url }     = $URL . "stikkits/" . $$params{ id } . $self->{ ext };
-    $self->{ content } = "raw_text=" . $$params{ text };
+
     $self->stikkit( $self->process( $params ) );
 }
 
@@ -220,13 +240,12 @@ sub stikkit_comment_make {
 
     croak( "Give me an ID" )     unless $$params{ id };
     croak( "Give me some text" ) unless $$params{ text };
-
+    $$params{comment} = $$params{text};
+    delete $$params{text};
     $self->check_format( $params, 'stikkits' );
-
     $self->{ method } = "POST";
     $self->{ url }
         = $URL . "stikkits/" . $$params{ id } . "/comments" . $self->{ ext };
-    $self->{ content } = "comment=" . $$params{ text };
     $self->comment( $self->process( $params ) );
 }
 
@@ -273,13 +292,13 @@ sub stikkit_unshare {
 sub calendars {
     my ( $self, $params ) = @_;
 
-    $self->{method} = "GET";
-    
-    $self->check_format($params, "calendars");
-    
-    $self->{ url } = $URL."calendar".$self->{ext};
+    $self->{ method } = "GET";
 
-    $self->calendar($self->process( $params ));
+    $self->check_format( $params, "calendars" );
+
+    $self->{ url } = $URL . "calendar" . $self->{ ext };
+
+    $self->calendar( $self->process( $params, "calendar" ) );
 }
 
 =head3 todos
@@ -288,15 +307,28 @@ sub calendars {
 sub todos {
     my ( $self, $params ) = @_;
 
-    # croak( "Give me an ID" ) unless $$params{ id };
-
     $self->{ method } = "GET";
 
     $self->check_format( $params, 'todos' );
 
     $self->{ url } = $URL . "todos" . $self->{ ext };
 
-    $self->todo( $self->process( $params ) );
+    $self->todo( $self->process( $params, "todos" ) );
+}
+
+=head3 done
+=cut
+
+sub done {
+    my ($self, $params) = @_;
+    
+    $self->{method} = "PUT";
+    
+    $self->check_format($params, 'todos');
+    
+    $self->{url} = $URL . "todos/" . $$params{id}.$self->{ext}.";toggle";
+    
+    $self->process($params, 'todos');
 }
 
 =head3 peeps
@@ -311,7 +343,7 @@ sub peeps {
 
     $self->{ url } = $URL . "peeps" . $self->{ ext };
 
-    $self->peep($self->process( $params ));
+    $self->peep( $self->process( $params, "peeps" ) );
 }
 
 =head3 bookmarks
@@ -326,7 +358,7 @@ sub bookmarks {
 
     $self->{ url } = $URL . "bookmarks" . $self->{ ext };
 
-    $self->bookmark($self->process( $params ));
+    $self->bookmark( $self->process( $params ) );
 }
 
 =head3 tags
@@ -336,17 +368,17 @@ Return a list of all your tags in Atom format
 =cut
 
 sub tags {
-    my ($self, $params) = @_;
-    
-    $self->{method} = "GET";
-    
-    $self->{format} = 'Atom';
-    $self->{ ext }  = $$FORMATS{ 'Atom' }{ ext };
-    $self->{ mime } = $$FORMATS{ 'Atom' }{ mime };
-    
-    $self->{url} = $URL."tags".$self->{ext};
-    
-    $self->tag($self->process($params));
+    my ( $self, $params ) = @_;
+
+    $self->{ method } = "GET";
+
+    $self->{ format } = 'Atom';
+    $self->{ ext }    = $$FORMATS{ 'Atom' }{ ext };
+    $self->{ mime }   = $$FORMATS{ 'Atom' }{ mime };
+
+    $self->{ url } = $URL . "tags" . $self->{ ext };
+
+    $self->tag( $self->process( $params ) );
 }
 
 =head3 check_format
@@ -357,18 +389,23 @@ sub check_format {
 
     if ( !defined $$params{ format } && !defined $self->{ format } ) {
         $self->{ format } = 'Atom';
-    } else {
+    }
+    else {
         if ( defined $$params{ format } ) {
-            if ( grep $_ =~ /$$params{ format }/,
-                 @{ $$TYPE_FORMAT{ $type } } )
+            if (grep $_ =~ /$$params{ format }/,
+                @{ $$TYPE_FORMAT{ $type } }
+                )
             {
                 $self->{ format } = $$params{ format };
-            } else {
+            }
+            else {
                 $self->{ format } = 'Atom';
             }
-        } elsif ( defined $self->{ format } ) {
-            if ( !grep $_ =~ /$self->{ format }/,
-                 @{ $$TYPE_FORMAT{ $type } } )
+        }
+        elsif ( defined $self->{ format } ) {
+            if (!grep $_ =~ /$self->{ format }/,
+                @{ $$TYPE_FORMAT{ $type } }
+                )
             {
                 $self->{ format } = 'Atom';
             }
@@ -385,12 +422,11 @@ sub check_format {
 sub check_api_key {
     my ( $self ) = @_;
 
-    if ( defined $self->{ api_key } ) {
-        $self->{ url } .= "?api_key=" . $self->{ api_key };
-    } else {
+    if ( !defined $self->{ api_key } ) {
         if ( !defined $self->{ user } || !defined $self->{ passwd } ) {
             croak( "Please specify you user/passwd OR you API key!" );
-        } else {
+        }
+        else {
             $self->{ use_basic_auth } = 1;
         }
     }
@@ -400,31 +436,31 @@ sub check_api_key {
 =cut
 
 sub finalize_url {
-    my ( $self ) = @_;
+    my ( $self, $params, $type ) = @_;
 
-    if ( defined $self->{ content } ) {
-        if ( defined $self->{ api_key } ) {
-            $self->{ url } .= "&" . $self->{ content };
-        } else {
-            $self->{ url } .= "?" . $self->{ content };
+    my $u = URI->new();
+
+    $u->query_param(kind => $self->{bitfield}) if defined $self->{bitfield};
+    $u->query_param(api_key   => $self->{api_key})   if !defined $self->{use_basic_auth};
+
+    foreach my $arg ( keys %{ $params } ) {
+        next if $arg eq "kind";
+        if ( grep $_ eq $arg, @{ $$FILTER{ $type } } ) {
+            next unless defined $$params{ $arg };
+            $u->query_param($arg => $$params{$arg});
         }
     }
 
-    if (defined $self->{bitfield} && $self->{bitfield} > 0){
-        if (defined $self->{content} || $self->{api_key}){
-            $self->{url} .= "&kind=".$self->{bitfield}
-        }else{
-            $self->{url} .= "?kind=".$self->{bitfield}
-        }
-    }
-    
+    $self->{url} .= "?".$u->query;
 }
 
 =head3 process
 =cut
 
 sub process {
-    my ( $self, $params ) = @_;
+    my ( $self )   = shift;
+    my ( $params ) = shift;
+    my ( $type )   = shift || "all";
 
     my $ua = LWP::UserAgent->new;
 
@@ -432,7 +468,7 @@ sub process {
     $self->check_api_key();
 
     # check if we have a content, in this case add it to the url
-    $self->finalize_url();
+    $self->finalize_url( $params, $type );
 
     my $req = HTTP::Request->new( $self->{ method } => $self->{ url } );
     $req->header( 'Accept' => $self->{ mime } );
@@ -444,18 +480,27 @@ sub process {
     }
 
     if ( $self->{ method } eq "POST" ) {
-        $req->content_length( length( $$params{ 'text' } ) );
-        $req->content( $$params{ 'text' } );
+        my ($size, $text);
+        if ($$params{'raw_text'}){
+            $size = length ($$params{'raw_text'});
+            $text = $$params{'raw_text'};
+        }else{
+            $size = length ($$params{'comment'});
+            $text = $$params{'raw_text'};
+        }
+        $req->content_length( $size );
+        $req->content( $text );
     }
 
     my $response = $ua->request( $req );
 
-    undef ($self->{content});
-    
+    undef( $self->{ content } );
+
     if ( $response->is_success ) {
         my $body = $response->content;
         return $body;
-    } else {
+    }
+    else {
         croak( "Impossible to execute the query :" . $response->status_line );
     }
 }

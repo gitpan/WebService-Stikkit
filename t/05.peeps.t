@@ -27,10 +27,10 @@ ok($stikkit->stikkit, "New stikkit data");
 my $data = jsonToObj($stikkit->stikkit);
 my $id = $$data{id};
 
-ok($stikkit->peeps(), "Get peeps");
+ok($stikkit->peeps({name => "Franck Cuny"}), "Get peeps");
 ok($stikkit->peep, "Got peep");
 
-my $peep = jsonToObj($stikkit->peep);
+my $peep = jsonToObj($stikkit->peep());
 is($$peep[0]{'name'}, "Franck Cuny", "Name OK");
 
 ok($stikkit->stikkit_delete({id => $id}), "Delete our stikkit");
